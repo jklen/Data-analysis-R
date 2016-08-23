@@ -1,0 +1,1811 @@
+---
+title: "Prosper - Exploratory data analysis with R"
+author: "jaroslav klen"
+date: "January 14, 2016"
+output: html_document
+---
+
+```{r global, echo = F}
+
+knitr::opts_chunk$set(echo = F, warning = F, message = F,
+                      fig.width = 10, fig.height = 5)
+
+```
+
+***
+
+## Goal of analysis
+
+***
+
+Question, to which I would like to find answer with this exploratory data analysis, is if there are any input variables, which have a relationship to borrower's ability to repay loan?
+
+***
+
+#### Variable description
+
+***
+
+<https://www.prosper.com/Downloads/Services/Documentation/ProsperDataExport_Details.html>
+
+```{r helpFunctions}
+
+# HELP FUNCTIONS
+
+library(ggplot2)
+library(lubridate)
+library(grid)
+library(tidyr)
+library(dplyr)
+library(scales)
+library(RColorBrewer)
+library(plotly)
+
+var_type <- function(var) {
+  
+  # function returns 'categorical' or 'continuous' string based on type of 
+  #   input variable,
+  # works with numeric, posixct, integer, character and factor type, otherwise 
+  #   returns 'unknown'
+  #
+  # Args:
+  #   var: input vector
+  
+  if (is.numeric(var) | is.POSIXct(var) | is.integer(var)) {
+    
+    return('continuous')
+  } else {
+    
+    if (is.character(var) | is.factor(var)) {
+      
+      return('categorical')
+    } else {
+      
+      return('unknown')
+    }
+  }
+  
+}
+
+# Help functions for plotting
+
+f_qlower <- function(x){
+  outl <- ou[1]
+}
+
+f_qupper <- function(x){
+  outup <- ou[2]
+}
+
+f_cat_perc <- function(x){
+    return(c(y = quantile(x, probs = 0.75)[[1]], label = 
+               round(length(x)/nrow(lb_before_repDate), 4) * 100))
+}
+
+f_cat_late_rcurrent <- function (x) {
+  
+  bad_perc <- 
+    round(length(x[x < 1])/
+            nrow(subset(lb_before_repDate, 
+                        pay_remain_current < 1)), 4) * 100
+  
+  return(c(y = quantile(x, probs = 0.22)[[1]], label = bad_perc))
+  
+}
+
+f_cat_late_diff <- function (x) {
+  
+  bad_perc <- 
+    round(length(x[x > 0])/
+            nrow(subset(lb_before_repDate, 
+                        should_pay_toMonth_diff > 0)), 4) * 100
+  
+  return(c(y = quantile(x, probs = 0.22)[[1]], label = bad_perc))
+  
+}
+
+f_cat_late_diff_rel <- function (x) {
+  
+  bad_perc <- 
+    round(length(x[x > 0])/
+            nrow(subset(lb_before_repDate, 
+                        should_pay_toMonth_diff_relative > 0)), 4) * 100
+  
+  return(c(y = quantile(x, probs = 0.22)[[1]], label = bad_perc))
+  
+}
+
+f_cat_late_rem_diff <- function (x) {
+  
+  bad_perc <- 
+    round(length(x[x < 0])/
+            nrow(subset(lb_before_repDate, 
+                        remain_toMonth_diff < 0)), 4) * 100
+  
+  return(c(y = quantile(x, probs = 0.22)[[1]], label = bad_perc))
+  
+}
+
+
+f_plot1 <- function(df, sampled = 0, maxcat = 30, lower = 0.1, upper = 0.9){
+  
+  # function prints plots based on variable type and summary,
+  # works with posixct, numeric, integer, character and factor types,
+  #
+  # Args:
+  #   df - dataframe of variables to examine
+  #   sampled - how much percet of data should be sampled, value 0 - 1, if 0, 
+  #     sampling is not used
+  #   maxcat - number of variable categories, above which variable will not 
+  #     be plotted
+  #   lower, upper - quantiles to cut in violin plot
+  #
+  # Returns:
+  #   For continuous variables prints histogram, violin/boxplot
+  #   For categorical variables prints bar and pie chart
+  
+  df <- data.frame(df)
+  plotted_nr <- 1
+  
+  if (sampled != 0) {
+    df_sampled <- df[sample.int(length(rownames(df)), trunc(sampled*nrow(df))),]
+  }
+  
+  for (var_name in colnames(df)) {
+   
+    if (sampled != 0) {
+      var <- df_sampled[, var_name]
+      
+    } else {
+      var <- df[, var_name] 
+      
+    }
+    
+    if (var_type(var) == 'continuous') {
+      
+      quants <- as.numeric(quantile(var, probs = c(0.01, 0.99, lower, upper), 
+                                    na.rm = T))
+      
+      var_hist <- var[var >= quants[1] & var <= quants[2]]
+      var_violin <- var[var >= quants[3] & var <= quants[4]]
+      
+      ch1 <- qplot(x = var_hist) +
+        geom_histogram(fill = '#F79420', 
+                       color = 'black') +
+        ggtitle(paste('(', plotted_nr, ')', ' ', var_name, 
+                      ', 0.01-0.99 quantile')) + 
+        geom_vline(xintercept = as.numeric(mean(var_hist, na.rm = T)), 
+                   color = 'red') +
+        geom_vline(xintercept = as.numeric(median(var_hist, na.rm = T)), 
+                   color = 'blue') +
+        geom_vline(xintercept = as.numeric(quantile(var_hist, 
+                                                    probs = 0.25, na.rm = T)), 
+                   linetype = 2, color = 'blue') +
+        geom_vline(xintercept = as.numeric(quantile(var_hist, 
+                                                    probs = 0.75, na.rm = T)), 
+                   linetype = 2, color = 'blue') +
+        geom_vline(xintercept = as.numeric(quantile(var_hist, 
+                                         probs = 0.1, na.rm = T)),
+                   linetype = 3) +
+        geom_vline(xintercept = as.numeric(quantile(var_hist, 
+                                         probs = 0.9, na.rm = T)),
+                   linetype = 3) +
+        theme(plot.title = element_text(size = 10),
+              axis.title.x = element_blank())
+      
+      plotted_nr <- plotted_nr + 1
+      
+      ch2 <- qplot(x = 1, y = var_violin) +
+        geom_violin() +
+        geom_boxplot(width = 0.1) +
+        coord_flip() +
+        ggtitle(paste('(', plotted_nr, ')', ' ', var_name, lower, '-', upper, 
+                      'quantile')) +
+        theme(plot.title = element_text(size = 10),
+              axis.title.x = element_blank()) +
+        geom_point(fun.y = mean, stat = 'summary', shape = 1, size = 4) +
+        geom_point(fun.y = quantile, fun.args=list(probs=0.1), 
+                   stat = 'summary', shape = 4, 
+                   size = 3) +
+        geom_point(fun.y = quantile, fun.args=list(probs=0.9), 
+                   stat = 'summary', shape = 4, size = 3)
+      
+      plotted_nr <- plotted_nr + 1
+      
+      print(paste(which(colnames(df) == var_name), ' ', 
+                  round(which(colnames(df) == var_name)/length(df), 4) * 100, 
+                  '%  --- ', var_name))
+      print(summary(df[, var_name]))
+      print(ch1)
+      print(ch2)
+    
+    } else {
+      
+      if (var_type(var) == 'categorical' & length(unique(var)) <= maxcat) {
+        
+        ch1 <- qplot(x = var, xlab = NULL, fill = var) + 
+          guides(fill=guide_legend(title=var_name)) + 
+          theme(legend.title = element_text(size = 7), 
+                legend.text = element_text(size = 7), 
+                legend.key.size = unit(0.3, "cm"), 
+                axis.text.x = element_blank(),
+                plot.title = element_text(size = 10)) +
+          ggtitle(paste('(', plotted_nr, ')', ' ', var_name)) 
+        
+        plotted_nr <- plotted_nr + 1
+        
+        ch2 <- qplot(x = factor(1), fill = var) + 
+          coord_polar(theta="y", start = 0) + 
+          guides(fill = guide_legend(title = var_name)) + 
+          theme(legend.title = element_text(size = 7),
+                legend.text = element_text(size = 7), 
+                legend.key.size = unit(0.3, "cm"),
+                plot.title = element_text(size = 10)) +
+          ggtitle(paste('(', plotted_nr, ')', ' ', var_name))
+        
+        plotted_nr <- plotted_nr + 1
+        
+        print(paste(which(colnames(df) == var_name), ' ', 
+                    round(which(colnames(df) == var_name)/length(df), 4) * 100, 
+                    '%  --- ', var_name))
+        print(summary(var))
+        print('-- % --')
+        print(round(summary(var)/length(var), 4) * 100)
+        print(ch1)
+        print(ch2)
+        
+      } else {
+        
+        if (var_type(var) == 'unknown') {
+         print(paste(var_name, ' not plotted, unkown type')) 
+          
+        } else {
+          print(paste(var_name, ' not plotted, maxcat limit'))
+          
+        }
+        
+      }
+      
+    }
+    
+  }
+  
+}
+
+
+f_plot2 <- function (df_target, df_input, sampled = 0, maxcat = 30, 
+                     bin_input = F, bins = 5, split = 'quantile', lower = 0.01, 
+                     upper = 0.99, cut = c(1, 2), alpha = 1) {
+  
+  # function prints plots based on variable types,
+  # works with integer, numeric, posixct, character and factor types
+  #
+  # Args:
+  #   df_target - dataframe with target variables to examine
+  #   sampled - how much percet of data should be sampled, value 0 - 1, if 0, s
+  #     ampling is not used
+  #   maxcat - number of variable categories, above which variable will not be 
+  #     plotted
+  #   bin_input - TRUE if continuous variables in df_input should be binned,
+  #     FALSE if not
+  #   bins - number of bins to create
+  #   split - if set to 'quantile', bins will be equally sized, otherwise bin 
+  #     intervals are
+  #     created from values
+  #   lower, upper -  which part of distribution to plot
+  #   cut - which variables to cut according to lower and upper attribute, 
+  #     if continuous,
+  #     1 - df with target variables, 
+  #     2 - df with input variables, c(1,2) - both
+  #   alpha - alpha attribute in plots
+  
+  df_target <- as.data.frame(df_target)
+  df_input <- as.data.frame(df_input)
+  plotted_nr <- 1
+  i <- 1
+  comb <- ncol(df_target) * ncol(df_input)
+  
+  # binning
+  
+  if (bin_input == T) {
+  
+    for (v_in in colnames(df_input)) {
+      
+      print(v_in)
+      if (var_type(df_input[, v_in]) == 'continuous') {
+        
+        # according to quantiles
+        
+        if (split == 'quantile') {
+          
+          var_cuts <- quantile(df_input[, v_in], (0:bins)/bins, na.rm = T)
+          var_binned <- cut(df_input[, v_in], var_cuts, include.lowest =  T)
+          df_input[, v_in] <- var_binned
+        
+        } else {
+          
+          # according to values
+          
+          quants <- as.numeric(quantile(df_input[, v_in], 
+                                        probs = c(lower, upper), na.rm = T))
+          var_binned <- cut(df_input[df_input[v_in] >= quants[[1]] & 
+                                       df_input[v_in] <= quants[[2]], v_in], 
+                            bins, include.lowest = T)
+          df_input[, v_in] <- var_binned
+        }
+        
+      }
+      
+    }
+    
+  }
+  
+  for (v_tar in colnames(df_target)) {
+    
+    for (v_in in colnames(df_input)) {
+      
+      cond1 <- is.numeric(df_target[, v_tar]) | 
+        is.integer(df_target[, v_tar]) | 
+        is.POSIXct(df_target[, v_tar])
+      cond1a <- is.character(df_target[, v_tar]) | 
+        is.factor(df_target[, v_tar])
+      cond2 <- is.numeric(df_input[, v_in]) | is.integer(df_input[, v_in]) | 
+        is.POSIXct(df_input[, v_in])
+      cond2a <- is.character(df_input[, v_in]) | is.factor(df_input[, v_in])
+      
+      bframe <- bind_cols(data.frame(df_target[, v_tar]), 
+                          data.frame(df_input[, v_in]))
+      colnames(bframe) <- c('v1', 'v2')
+      rows_nr <- nrow(bframe)
+      
+      # subset on quantiles if continuous
+      
+      if (cond1 & 1 %in% cut) {
+        quant_target <- quantile(df_target[, v_tar], 
+                                 probs = c(lower, upper), 
+                                 na.rm = T)
+        bframe <- subset(bframe, v1 <= quant_target[[2]] & 
+                           v1 >= quant_target[[1]])
+      }
+      
+      if (cond2 & 2 %in% cut) {
+        quant_input <- quantile(df_input[, v_in], 
+                                probs = c(lower, upper), 
+                                na.rm = T)
+        bframe <- subset(bframe, v2 <= quant_input[[2]] & 
+                           v2 >= quant_input[[1]])
+      }
+      
+      # sample from dataframe, if set
+      
+      if (sampled != 0) {
+        bframe <- bframe[sample.int(length(rownames(bframe)), 
+                                    trunc(sampled*nrow(bframe))),]
+      }
+      
+      # plotting
+      
+      if (cond1 & cond2) {
+        
+        cor_string <- ifelse(is.POSIXct(bframe$v1) | 
+                               is.POSIXct(bframe$v2), '', 
+                              paste(', cor ', 
+                                    round(cor.test(bframe$v1, bframe$v2, 
+                                              method = 'pearson')[[4]], 4)))
+        
+        ch1 <- ggplot(aes(x = v1, y = v2), data = bframe) + 
+          geom_point(alpha = alpha) + 
+          geom_smooth() +
+          xlab(v_tar) + 
+          ylab(v_in) +
+          ggtitle(paste('(', plotted_nr, ') ', v_tar, ' ', 
+                        ifelse(1 %in% cut, 
+                               paste(lower, '-', upper, 'q', sep = ''), ''), 
+                        ' vs ', v_in, ' ',
+                        ifelse(2 %in% cut, 
+                               paste(lower, '-', upper, 'q', sep = ''), ''),
+                        cor_string, 
+                        sep = ''))
+        
+        print(ch1)
+        plotted_nr <- plotted_nr + 1
+        
+        ch2 <- smoothScatter(bframe$v1, bframe$v2, 
+                             colramp = colorRampPalette(c('white', 
+                                                    brewer.pal(9, 'Reds'))), 
+                             xlab = v_tar, 
+                             ylab = v_in, 
+                             main = paste('(', plotted_nr, ') ', v_tar, ' ', 
+                                          ifelse(1 %in% cut, 
+                                                 paste(lower, '-', upper, 
+                                                       'q', 
+                                                       sep = ''), ''), 
+                                          ' vs ', v_in, ' ',
+                                          ifelse(2 %in% cut, paste(lower, '-', 
+                                                                   upper, 'q', 
+                                                                   sep = ''), 
+                                                 ''), 
+                                          sep = ''))
+        
+        
+        print(ch2)
+        plotted_nr <- plotted_nr + 1
+      } else {
+        
+        if (cond1 & cond2a & length(unique(bframe$v2)) <= maxcat) {
+          
+          ch1 <- ggplot(aes(y = v1, x = v2), data = bframe) + 
+            geom_boxplot() + 
+            geom_point(stat = 'summary', fun.y = mean, shape = 1, size = 2) + 
+            xlab(v_in) + 
+            ylab(v_tar) +
+            ggtitle(paste('(', plotted_nr, ') ', v_tar, ' vs ', v_in))
+          print(ch1)
+          
+          plotted_nr <- plotted_nr + 1
+        } else {
+          
+          if (cond1a & cond2 & length(unique(bframe$v1)) <= maxcat) {
+            quant_input <- quantile(df_input[, v_in], 
+                                    probs = c(lower, upper), 
+                                    na.rm = T)
+            bframe <- subset(bframe, v2 <= quant_input[[2]] & 
+                               v2 >= quant_input[[1]])
+            
+            ch1 <- ggplot(aes(y = v2, x = v1), data = bframe) + 
+              geom_boxplot() + 
+              geom_point(stat = 'summary', fun.y = mean, shape = 1, 
+                         size = 2) + 
+              xlab(v_tar) + 
+              ylab(v_in) +
+              ggtitle(paste('(', plotted_nr, ') ', v_tar, ' vs ', v_in))
+            print(ch1)
+            plotted_nr <- plotted_nr + 1
+          } else {
+            
+            if (cond1a & cond2a & length(unique(bframe$v1)) <= maxcat & 
+                length(unique(bframe$v2)) <= maxcat) {
+              ch1 <- ggplot(aes(x = v2, fill = v2), data = bframe) + 
+                geom_bar() + 
+                facet_wrap(~ v1) + 
+                xlab(v_tar) + 
+                labs(fill = v_in) +
+                ggtitle(paste('(', plotted_nr, ') ', v_tar, ' vs ', v_in))
+              print(ch1)
+              plotted_nr <- plotted_nr + 1
+            } else {
+              print(paste('Not plotted: ', v_tar, ' vs. ', v_in))
+            }
+          }
+        }
+      }
+      print(paste(i, ' ', round(i/comb, 4) * 100, '% ', 
+                  round(nrow(bframe)/rows_nr, 4) * 100, '% data --- ', 
+                  v_tar, ' vs. ', v_in))
+      i <- i + 1
+      
+    }
+    
+    
+  }
+  
+}
+
+f_default <- function (df, variables, separate = F, delay = 0, lower = 0.01, 
+                       upper = 0.99, bins = 5, split = 'quantile') {
+  
+  # calculates default rate
+  #
+  # Args:
+  #   df - input dataframe with all variables
+  #   variables - character vector of variables to examine
+  #   separate - if TRUE, categories in each variable will be examined 
+  #     separately, if FALSE, every combination of catagories between 
+  #     variables will be examined
+  #   lower, upper - which part of distribution of continous variable will 
+  #     be binned. No effect, if split attribute is set to 'quantile'
+  #   bins - number of bins to create when continuous variable
+  #   split - 'quantile' bins continous variable to equally sized bins based 
+  #     on qantiles. Otherwise bins are created based on values using part of 
+  #     distribution between lower and upper attribute
+  #
+  # Returns:
+  #   dataframe with default rate values
+  
+  # binning
+  
+  for (v in colnames(df)) {
+    
+    if (var_type(df[, v]) == 'continuous' & v %in% variables) {
+      
+      # according to quantiles
+      
+      if (split == 'quantile') {
+        
+        var_cuts <- quantile(df[, v], (0:bins)/bins, na.rm = T)
+        var_binned <- cut(df[, v], var_cuts, include.lowest =  T)
+        df[, v] <- var_binned
+      
+      } else {
+        
+        # according to values
+        
+        quants <- as.numeric(quantile(df[, v], probs = c(lower, upper), 
+                                      na.rm = T))
+        var_binned <- cut(df[df[v] >= quants[[1]] & df[v] <= quants[[2]], v], 
+                          bins, include.lowest = T)
+        df[, v] <- var_binned
+      }
+      
+    }
+    
+  }
+  
+  # calculating default rate for each group combination
+  
+  if (separate == F) {
+  
+    group_default <- df %>%
+      group_by_(.dots = lapply(variables, as.symbol)) %>%
+      summarise(all_loans_count = n(),
+        all_interest = sum(should_pay_interest_all),
+        all_principal = sum(LoanOriginalAmount),
+        delayed_loans_count = sum(LoanCurrentDaysDelinquent > delay),
+        delayed_interest = 
+          sum(should_pay_interest_all[LoanCurrentDaysDelinquent > delay]),
+        delayed_principal = 
+          sum(LoanOriginalAmount[LoanCurrentDaysDelinquent > delay]),
+        delayed_paid = 
+          sum(LP_CustomerPayments[LoanCurrentDaysDelinquent > delay])) %>%
+      mutate(default_rate = 
+               (delayed_interest + delayed_principal - delayed_paid)/
+               (all_interest + all_principal)) %>%
+      ungroup() %>%
+      arrange(desc(default_rate))
+  
+  } else {
+    
+    # calculating default rate for each variable groups separately
+    
+    for (v in variables) {
+      
+      colnames(df)[colnames(df) == v] <- 'var'
+      
+      gd <- df %>%
+        group_by(var) %>%
+        summarise(all_loans_count = n(),
+          all_interest = sum(should_pay_interest_all),
+          all_principal = sum(LoanOriginalAmount),
+          delayed_loans_count = sum(LoanCurrentDaysDelinquent > delay),
+          delayed_interest = 
+            sum(should_pay_interest_all[LoanCurrentDaysDelinquent > delay]),
+          delayed_principal = 
+            sum(LoanOriginalAmount[LoanCurrentDaysDelinquent > delay]),
+          delayed_paid = 
+            sum(LP_CustomerPayments[LoanCurrentDaysDelinquent > delay])) %>%
+        mutate(default_rate = 
+                 (delayed_interest + delayed_principal - delayed_paid)/
+                 (all_interest + all_principal)) %>%
+        ungroup() %>%
+        arrange(desc(default_rate))
+      
+      gd$variable <- v
+      
+      colnames(df)[colnames(df) == 'var'] <- v
+      
+      if (v == variables[1]) {
+        group_default <- gd
+        
+      } else {
+        group_default <- bind_rows(group_default, gd)
+        
+      }
+    }
+    
+  }
+  
+  colnames(group_default)[colnames(group_default) == 'var'] <- 'categories'
+  group_default <- group_default[,c(10, 1:9)]
+  
+  #print(group_default)
+  return(group_default)
+ 
+}
+
+```
+
+***
+
+## Dataset consistency and pre-investigations
+
+***
+
+This part is focused on examining structure of the dataset, characteristics and meanings of variables neccessary to perform analysis. Goal is to have dataset analysis-ready together with newly created variables, which provide us more information about loan listing or borrower. 2nd goal is finding or creating target variables, which express borrower's ability to repay loan, to which I would like to create regression model from input variables, if possible.
+
+
+
+According to provided variables description, ListingKey, ListingNumber and LoanKey are all unique identifiers of each listing included in dataset. Lets check it.
+
+```{r}
+loans_data <- read.csv('C:\\Users\\IBM_ADMIN\\Desktop\\R\\UDA\\Project_data\\prosperLoanData.csv')
+
+```
+
+Number of loans in whole dataset : `r nrow(loans_data)`
+
+Unique number of ListingKey: `r length(unique(loans_data$ListingKey))`
+
+Unique number of ListingNumber: `r length(unique(loans_data$ListingNumber))`
+
+Unique number of LoanKey: `r length(unique(loans_data$LoanKey))`
+
+Number of duplicated rows: `r nrow(loans_data[duplicated(loans_data),]) `
+
+For purpose of further analysis, `r nrow(loans_data[duplicated(loans_data$ListingKey),])` duplicate listings (based on LisingKey) with higher row index were removed. For unknown reason, they differ on ProsperScore. Prior performing any analysis, we have to examine the structure of the dataset to be sure, that all variables are in proper format and if information they contain is consistent.
+
+```{r vartype_change1}
+
+ld <- loans_data[!duplicated(loans_data$ListingKey),]
+
+# CHANGE SELECTED VARIABLES FORMAT 1.
+
+ld$LoanStatus <- 
+  factor(ld$LoanStatus, ordered = T, 
+                levels = c('Completed', 'FinalPaymentInProgress', 
+                           'Current', 'Past Due (1-15 days)', 
+                           'Past Due (16-30 days)', 'Past Due (31-60 days)', 
+                           'Past Due (61-90 days)', 'Past Due (91-120 days)', 
+                           'Past Due (>120 days)', 'Defaulted', 'Chargedoff'))
+ld$ListingKey <- as.character(ld$ListingKey)
+ld$ListingCreationDate <- 
+  as.POSIXct(strptime(as.character(ld$ListingCreationDate), 
+                      format = '%Y-%m-%d %H:%M:%S'))
+ld$Term <- factor(ld$Term)
+ld$CreditGrade <- factor(ld$CreditGrade, ordered = T, 
+                         levels = c('AA', 'A', 'B', 'C', 'D', 'E', 'HR', 'NC'))
+ld$ClosedDate <- 
+  as.POSIXct(strptime(as.character(ld$ClosedDate), format = '%Y-%m-%d'))
+ld$ProsperRating..Alpha. <- factor(ld$ProsperRating..Alpha., ordered = T, 
+                                   levels = c('AA', 'A', 'B', 
+                                              'C', 'D', 'E', 'HR'))
+colnames(ld)[names(ld) == 'ProsperRating..Alpha.'] <- 'ProsperRating_alpha'
+ld$ProsperRating..numeric. <- factor(ld$ProsperRating..numeric., 
+                                     levels = c(1:7), ordered = T)
+colnames(ld)[names(ld) == 'ProsperRating..numeric.'] <- 'ProsperRating_numeric'
+ld$ProsperScore <- as.integer(ld$ProsperScore)
+ld$ListingCategory..numeric. <- 
+  factor(ld$ListingCategory..numeric., 
+         levels =c(0:20), 
+         labels = c('Not available', 'Debt consolidation', 'Home improvement', 
+              'Business', 'Personal loan', 'Student use', 'Auto', 'Other', 
+              'Baby & adoption loans', 'Boat', 'Cosmetic procedures', 
+              'Engagement ring financing', 'Greeen loans', 
+              'Household expenses', 'Large purchases','Medical/Dental', 
+              'Motorcycle', 'RV', 'Taxes', 'Vacation', 'Wedding loans'))
+colnames(ld)[names(ld) == 'ListingCategory..numeric.'] <- 
+  'ListingCategory_numeric'
+
+ld$DateCreditPulled <- 
+  as.POSIXct(strptime(as.character(ld$DateCreditPulled), 
+                      format = '%Y-%m-%d %H:%M:%S'))
+ld$FirstRecordedCreditLine <- 
+  as.POSIXct(strptime(as.character(ld$FirstRecordedCreditLine), 
+                      format = '%Y-%m-%d'))
+ld$LoanNumber <- as.character(ld$LoanNumber)
+
+```
+
+Summary of IncomeRange:
+
+```{r}
+summary(ld$IncomeRange)
+```
+
+Summary of EmploymentStatus:
+
+```{r}
+summary(ld$EmploymentStatus)
+```
+
+Number of loans, which have IncomeRange and EmploymentStatus 'Not employed': `r nrow(ld[ld['IncomeRange'] == 'Not employed' & ld['EmploymentStatus'] == 'Not employed',])`
+
+Category 'Not employed' in variable IncomeRange we can replace with NA, because this information is probably included in variable EmploymentStatus, for  category 'Not displayed' we have to create new variable called IncomeDisplayed with values 0 or 1 and replace it in original variable with NA. We have to change empty string and 'Not available' category in EmploymentStatus variable to NA too. Altough, these values could maybe reflect some changes of internal processes during loan listing evaluation, without knowing more information it is better this solution.
+
+Since Prosper got through major changes in business model and its relaunch on July 2009, it might be possible, that I will use use these data only in further analysis, but for now, I will use all data.
+
+Modified dataset structure:
+
+```{r varType_change2}
+
+# CHANGE SELECTED VARIABLES FORMAT 2.
+
+ld$EmploymentStatus <- ifelse(ld$EmploymentStatus %in% c('', 'Not available'), 
+                              NA, as.character(ld$EmploymentStatus))
+ld$EmploymentStatus <- factor(ld$EmploymentStatus)
+ld$IncomeRange <- ifelse(ld$IncomeRange == 'Not employed', 
+                         NA, as.character(ld$IncomeRange))
+ld$IncomeDisplayed <- ifelse(ld$IncomeRange == 'Not displayed', FALSE, TRUE)
+ld$IncomeRange <- ifelse(ld$IncomeRange == 'Not displayed', NA, ld$IncomeRange)
+ld$IncomeRange <- factor(ld$IncomeRange, 
+                         ordered = T, 
+                         levels = c('&0', '$1-24,999', '$25,000-49,999', 
+                              '$50,000-74,999', '$75,000-99,999', '$100,000+'))
+
+ld$LoanKey <- as.character(ld$LoanKey)
+ld$LoanOriginationDate <- 
+  as.POSIXct(strptime(as.character(ld$LoanOriginationDate), 
+                      format = '%Y-%m-%d'))
+ld$MemberKey <- as.character(ld$MemberKey)
+ld$TotalProsperLoans <- factor(ld$TotalProsperLoans, ordered = T)
+ld$PublicRecordsLast12Months <- factor(ld$PublicRecordsLast12Months, 
+                                       ordered = T)
+ld$PublicRecordsLast10Years <- factor(ld$PublicRecordsLast10Years, 
+                                      ordered = T)
+ld$Recommendations <- factor(ld$Recommendations, ordered = T)
+ld$InvestmentFromFriendsCount <- factor(ld$InvestmentFromFriendsCount, 
+                                        ordered = T)
+ld$TradesOpenedLast6Months <- factor(ld$TradesOpenedLast6Months, 
+                                     ordered = T)
+ld$CurrentDelinquencies <- factor(ld$CurrentDelinquencies, ordered = T)
+ld$TotalInquiries <- factor(ld$TotalInquiries, ordered = T)
+ld$InquiriesLast6Months <- factor(ld$InquiriesLast6Months, ordered = T)
+ld$OpenRevolvingAccounts <- factor(ld$OpenRevolvingAccounts, ordered = T)
+ld$OpenCreditLines <- factor(ld$OpenCreditLines, ordered = T)
+ld$CurrentCreditLines <- factor(ld$CurrentCreditLines, ordered = T)
+ld$ProsperPaymentsLessThanOneMonthLate <- 
+  factor(ld$ProsperPaymentsLessThanOneMonthLate, ordered = T)
+ld$ProsperPaymentsOneMonthPlusLate <- factor(ld$ProsperPaymentsOneMonthPlusLate, 
+                                             ordered = T)
+ld$ProsperScore <- factor(ld$ProsperScore, ordered = T)
+
+
+#ld <- subset(ld, ListingCreationDate >= '2009-07-01')
+
+str(ld)
+
+```
+
+```{r allvar_calc}
+
+# ALL NEW VARIABLES CALCULATIONS
+
+##################### BY LISTING
+
+  # DATES
+
+ld$closed_after_orig <- 
+  trunc(as.numeric((ld$ClosedDate - ld$LoanOriginationDate)/(3600*24*30)))
+ld$closed_before_repDate <- 
+  as.numeric(as.character(ld$Term))  - ld$closed_after_orig
+ld$closed_before_repDate_relative <- 
+  ld$closed_before_repDate/as.numeric(as.character(ld$Term))
+ld$months_until_repDate <- 
+  trunc(as.numeric((ld[,'LoanOriginationDate'] + 
+                      months(as.integer(as.character(ld[, 'Term'])))) - 
+                                    (ld[,'LoanOriginationDate'] + months(ld[, 'LoanMonthsSinceOrigination'])))/(3600*24*30))
+ld$months_until_repDate_relative <- 
+  ld$months_until_repDate/as.integer(as.character(ld$Term))
+ld$sign_repDate <- 
+  as.factor(ifelse(ld$months_until_repDate > 0 , 
+                   'before_repDate', 'eq_after_repDate'))
+ld$is_closed <- as.factor(ifelse(is.na(ld$ClosedDate), 'open', 'closed'))
+
+  # manually calculated monthly payment
+
+principal <- ld$LoanOriginalAmount
+irate <- as.numeric(ld$BorrowerRate / 12, digits = 10)
+term <- as.integer(as.character(ld$Term))
+
+ld$MonthlyLoanPayment_manual <- (principal * ((((1 + irate) ^ term) * irate) / 
+                                                (((1 + irate) ^ term) - 1)))
+
+rm(principal, irate, term)
+                                 
+#ld <- ld[abs(ld$MonthlyLoanPayment_manual - ld$MonthlyLoanPayment) <= 1,]
+
+ld$YearlyIncome <- ld$StatedMonthlyIncome * 12
+
+ld$should_pay <- 
+  (as.integer(as.character(ld$Term))) * ld$MonthlyLoanPayment_manual
+
+ld <- subset(ld, is.na(ld$closed_after_orig) | ld$closed_after_orig > 0)
+ld$should_pay_interest <- ld$should_pay - ld$LoanOriginalAmount
+ld$should_pay_interest_relative <- ld$should_pay_interest/ld$should_pay
+
+ld$AmountDelinquent_principal_ratio <- 
+  ld$AmountDelinquent/ld$LoanOriginalAmount
+ld$AmountDelinquent_income_ratio <- ld$AmountDelinquent/ld$StatedMonthlyIncome
+
+ld$should_pay_toClose <- 
+  ifelse(ld$LoanStatus == 'Completed', 
+         (ld$LoanOriginalAmount * 
+             ((((1 + (ld$BorrowerAPR/12)) ^ ld$closed_after_orig) * 
+            (ld$BorrowerAPR/12)) / (((1 + (ld$BorrowerAPR/12)) ^ 
+                                       ld$closed_after_orig) - 1))) * 
+            ld$closed_after_orig, NA)
+ld$should_pay_toClose_interest <- 
+  ld$should_pay_toClose - ld$LoanOriginalAmount
+
+ld$should_pay_interest_all <- ld$should_pay_toClose_interest
+ld$should_pay_interest_all <- 
+  ifelse(is.na(ld$should_pay_interest_all),
+         ld$should_pay_interest, ld$should_pay_interest_all)
+
+ld <- subset(ld, !is.na(should_pay_interest_all))
+
+ld$should_pay_toMonth <- 
+  ifelse(ld$months_until_repDate <= 0, 
+         ld$should_pay, ld$MonthlyLoanPayment_manual * 
+                                  ld$LoanMonthsSinceOrigination)
+ld$should_pay_toMonth_diff <- 
+  ld$should_pay_toMonth - ld$LP_CustomerPayments
+ld$should_pay_toMonth_diff_relative <- 
+  ld$should_pay_toMonth_diff / ld$should_pay_toMonth
+
+ld$should_remain_toMonth <- 
+  ifelse(ld$months_until_repDate <= 0, 
+         0, ld$months_until_repDate * ld$MonthlyLoanPayment_manual)
+ld$remain_toMonth <- ld$should_pay - ld$LP_CustomerPayments
+ld$remain_toMonth_diff <- ld$should_remain_toMonth - ld$remain_toMonth
+ld$remain_toMonth_diff_relative <- 
+  ld$remain_toMonth_diff / ld$should_remain_toMonth
+ld$pay_until_current <- ld$should_pay_toMonth / ld$LP_CustomerPayments
+ld$pay_remain_current <- ld$should_remain_toMonth/ld$remain_toMonth
+
+###################### BY BORROWER GROUPING
+
+by_borrower <- ld %>% 
+  arrange(LoanOriginationDate) %>%
+  group_by(MemberKey) %>%
+  summarize(TotalProsperLoans = last(TotalProsperLoans), 
+    TotalProsperPaymentsBilled = last(TotalProsperPaymentsBilled),
+    OnTimeProsperPayments = last(OnTimeProsperPayments),
+    ProsperPaymentsLessThanOneMonthLate = 
+      last(ProsperPaymentsLessThanOneMonthLate),
+    ProsperPaymentsOneMonthPlusLate = 
+      last(ProsperPaymentsOneMonthPlusLate),
+    ProsperPrincipalBorrowed = last(ProsperPrincipalBorrowed),
+    TotalCustomerPayments = 
+      sum(LP_CustomerPayments) - last(LP_CustomerPayments),
+    TotalInterestandFees = 
+      sum(LP_InterestandFees) - last(LP_InterestandFees),
+    LastLoanStatus = last(LoanStatus),
+    TotalInvestors = sum(Investors) - last(Investors))
+
+by_borrower$TotalProsperLoans <- 
+  as.integer(as.character(by_borrower$TotalProsperLoans))
+by_borrower$TotalProsperLoans <- by_borrower$TotalProsperLoans + 1
+
+by_borrower$latePayments_ratio <- 
+  (as.integer(as.character(by_borrower$ProsperPaymentsLessThanOneMonthLate)) +
+  as.integer(as.character(by_borrower$ProsperPaymentsOneMonthPlusLate)))/
+  by_borrower$TotalProsperPaymentsBilled
+
+
+  # currently outstanding loans number
+
+by_borrower_d1 <- ld %>%
+  select(MemberKey, LoanStatus, LoanCurrentDaysDelinquent) %>%
+  filter(LoanStatus == 'Current' | 
+           (LoanStatus != 'Current' & 
+              LoanCurrentDaysDelinquent > 0)) %>%
+  group_by(MemberKey) %>%
+  summarise(loans_outstanding = n())
+
+by_borrower <- left_join(by_borrower, by_borrower_d1, by = 'MemberKey')
+
+  # to get avg, min, max interval in months between loan origination dates
+
+by_borrower_d1 <- ld %>%
+  select(MemberKey, LoanOriginationDate) %>%
+  arrange(MemberKey, LoanOriginationDate) %>%
+  mutate(date_lead = lead(LoanOriginationDate)) %>%
+  mutate(loan_orig_diffs = 
+           as.numeric((date_lead - LoanOriginationDate)/(3600*24*30)))
+by_borrower_d2 <- by_borrower_d1 %>%
+  group_by(MemberKey) %>%
+  summarise(LoanOriginationDate = last(LoanOriginationDate), 
+            loan_orig_diffs = last(loan_orig_diffs))
+by_borrower_orig_diffs <- 
+  anti_join(by_borrower_d1, by_borrower_d2, 
+            by = c('MemberKey', 'LoanOriginationDate', 'loan_orig_diffs')) %>%
+  group_by(MemberKey) %>%
+  summarise(avg_orig_int = mean(loan_orig_diffs), 
+            max_orig_int = max(loan_orig_diffs, 
+            min_orig_int = min(loan_orig_diffs)))
+
+by_borrower <- left_join(by_borrower, by_borrower_orig_diffs, by = 'MemberKey')
+
+  # to get intervals between close and next loan origination dates
+
+by_borrower_d1 <- ld %>%
+  select(MemberKey, LoanOriginationDate, ClosedDate) %>%
+  arrange(MemberKey, LoanOriginationDate) %>%
+  mutate(orig_lead = lead(LoanOriginationDate)) %>%
+  mutate(next_close_orig_diffs = 
+           as.numeric((orig_lead - ClosedDate)/(3600*24*30)))
+by_borrower_d1 <- filter(by_borrower, TotalProsperLoans >= 1) %>%
+  group_by(MemberKey) %>%
+  summarise(count = n()) %>%
+  inner_join(by_borrower_d1, by = 'MemberKey') %>%
+  arrange(MemberKey, LoanOriginationDate)
+by_borrower_d2 <- by_borrower_d1 %>%
+  group_by(MemberKey) %>%
+  summarise(LoanOriginationDate = last(LoanOriginationDate))
+by_borrower_close_orig_diffs <- 
+  anti_join(by_borrower_d1, by_borrower_d2, 
+            by = c('MemberKey', 'LoanOriginationDate')) %>%
+  group_by(MemberKey) %>%
+  summarise(avg_close_orig_int = mean(next_close_orig_diffs), 
+            sum_close_orig_int = sum(next_close_orig_diffs),
+            min_close_orig_int = min(next_close_orig_diffs), 
+            max_close_orig_int = max(next_close_orig_diffs)) %>%
+  arrange(MemberKey)
+
+by_borrower <- left_join(by_borrower, by_borrower_close_orig_diffs, 
+                         by = 'MemberKey')
+  
+  # to get summary statistics and growths of selected continuous variables, 
+    # last category and all categories coancenated as strings of cat. variables
+
+var_selected <- 
+  c('BorrowerAPR', 'BorrowerRate', 'EmploymentStatusDuration', 
+    'CurrentCreditLines', 'OpenCreditLines', 'OpenRevolvingAccounts', 
+    'OpenRevolvingMonthlyPayment', 'InquiriesLast6Months', 'TotalInquiries', 
+    'CurrentDelinquencies', 'AmountDelinquent', 'RevolvingCreditBalance', 
+    'BankcardUtilization', 'AvailableBankcardCredit', 'TradesOpenedLast6Months', 
+    'DebtToIncomeRatio', 'StatedMonthlyIncome', 'AmountDelinquent_principal_ratio',
+    'AmountDelinquent_income_ratio')
+
+for (v in var_selected) {
+  
+  df <- ld[, c('MemberKey', 'LoanOriginationDate', v)]
+  colnames(df) <- c('MemberKey', 'LoanOriginationDate', 'var')
+  
+  if (var_type(df$var) == 'continuous') {
+    
+    # print(v)
+    
+    # growth
+  
+    by_borrower_d1 <- df %>%
+      filter(!is.na(var)) %>%
+      select(MemberKey, LoanOriginationDate, var) %>%
+      arrange(MemberKey, LoanOriginationDate) %>%
+      mutate(l = lead(var)) %>%
+      mutate(g = (l - var)/var)
+    by_borrower_d1 <- filter(by_borrower, TotalProsperLoans >= 1) %>%
+      group_by(MemberKey) %>%
+      summarise(count = n()) %>%
+      inner_join(by_borrower_d1, by = 'MemberKey') %>%
+      arrange(MemberKey, LoanOriginationDate)
+    by_borrower_d2 <- by_borrower_d1 %>%
+      group_by(MemberKey) %>%
+      summarise(LoanOriginationDate = last(LoanOriginationDate))
+    by_borrower_growths <- 
+      anti_join(by_borrower_d1, by_borrower_d2, 
+                by = c('MemberKey', 'LoanOriginationDate')) %>%
+      group_by(MemberKey) %>%
+      summarise(avg = mean(g), minimum = min(g), maximum = max(g)) %>%
+      arrange(MemberKey)
+    
+    by_borrower <- left_join(by_borrower, by_borrower_growths, 
+                             by = 'MemberKey')
+    
+    colnames(by_borrower)[(length(by_borrower) - 2):(length(by_borrower))] <- 
+      c(paste('meanGrowth_', v, sep = ''), 
+        paste('minGrowth_', v, sep = ''), 
+        paste('maxGrowth_', v, sep = ''))
+    # mean, min, max of variable
+    
+    by_borrower_d1 <- df %>%
+      select(MemberKey, var) %>%
+      group_by(MemberKey) %>%
+      summarise(avg = mean(var), min = min(var), max = max(var))
+    
+    by_borrower <- left_join(by_borrower, by_borrower_d1, by = 'MemberKey')
+    
+    colnames(by_borrower)[(length(by_borrower) - 2):(length(by_borrower))] <- 
+      c(paste('mean_', v, sep = ''), 
+        paste('min_', v, sep = ''), 
+        paste('max_', v, sep = ''))
+    
+  } else {
+    
+    # categories
+    
+    # print(paste('Not continuous - ', v))
+    
+    by_borrower_d1 <- df %>%
+      arrange(MemberKey, LoanOriginationDate) %>%
+      group_by(MemberKey) %>%
+      summarise(lastCat = last(var), all = toString(unique(var)))
+    
+    by_borrower <- left_join(by_borrower, by_borrower_d1, by = 'MemberKey')
+    
+    colnames(by_borrower)[(length(by_borrower) - 1):length(by_borrower)] <- 
+      c(paste('last_', v, sep = ''), 
+        paste('all_', v, sep = ''))
+    
+  }
+}
+
+rm(by_borrower_d1, by_borrower_d2, by_borrower_growths, by_borrower_orig_diffs, 
+   by_borrower_close_orig_diffs, df)
+
+by_borrower_f <- subset(by_borrower, TotalProsperLoans >=2)
+
+  # listings dataframe joined with borrower dataframe
+
+lb <- left_join(ld, by_borrower, by = 'MemberKey')
+
+lb_before_repDate <<- 
+  subset(lb, LoanStatus %in% c('Completed', 'Chargedoff', 'Defaulted') & 
+                              sign_repDate == 'before_repDate')
+
+lb_before_repDate$CreditGrade <- NULL # contains only NA values
+
+```
+
+```{r varCat}
+
+# VARIABLES CATEGORIES
+
+var_chars <- 
+  c('BorrowerState', 'PublicRecordsLast12Months', 'Occupation', 
+    'IncomeVerifiable', 'EmploymentStatus', 'StatedMonthlyIncome', 
+    'EmploymentStatusDuration', 'Recommendations', 'IsBorowerHomeowner', 
+     'InvestmentFromFriendsCount', 'CurrentlyInGroup', 
+     'PublicRecordsLast10Years', 'Investors', 'YearlyIncome')
+
+var_debt <- 
+  c('FirstRecordedCreditLine', 'CurrentCreditLines', 
+    'OpenCreditLines', 'TotalCreditLinespast7years', 
+    'OpenRevolvingAccounts', 'OpenRevolvingMonthlyPayment', 
+    'InquiriesLast6Months', 'TotalInquiries', 
+    'CurrentDelinquencies', 'AmountDelinquent', 
+    'DelinquenciesLast7Years', 'RevolvingCreditBalance', 
+    'BankcardUtilization', 'AvailableBankcardCredit', 'TotalTrades', 
+    'TradesNeverDelinquent', 'TradesOpenedLast6Months', 
+    'DebtToIncomeRatio', 'AmountDelinquent_income_ratio')
+
+var_hist <- 
+  c('TotalProsperLoans.x', 'TotalProsperPaymentsBilled.x', 
+    'OnTimeProsperPayments.x', 'ProsperPaymentsLessThanOneMonthLate.x', 
+    'ProsperPaymentsOneMonthPlusLate.x', 
+    'ProsperPrincipalBorrowed.x', 'ProsperPrincipalOutstanding')
+
+var_listing_char <- 
+  c('LoanStatus', 'ListingCreationDate', 'Term', 'ListingCategory', 
+    'ClosedDate', 'DateCreditPulled', 'LoanMonthsSinceOrigination', 
+    'LoanOriginalAmount', 'LoanOriginationDate', 'LoanOriginationQuarter', 
+    'MonthlyLoanPayment', 'AmountDelinquent_principal_ratio', 
+    'LoanCurrentDaysDelinquent', 'LoanFirstDefaultedCycleNumber',
+    'LP_GrossPrincipalLoss', 'LP_NetPrincipalLoss', 
+    'LP_NonPrincipalRecoverypayments')
+
+var_help <- 
+  c('MonthlyLoanPayment_manual', 'should_pay', 'closed_after_orig', 
+    'closed_before_repDate', 'closed_before_repDate_relative', 
+    'should_pay_interest', 'should_pay_interest_relative', 
+    'months_until_repDate', 'months_until_repDate_relative', 'sign_repDate', 
+    'is_closed')
+
+var_inputs <- 
+  c('StatedMonthlyIncome', 'YearlyIncome', 'IncomeRange', 'IncomeVerifiable', 
+    'PublicRecordsLast10Years', 'EmploymentStatus', 'InquiriesLast6Months', 
+    'TradesOpenedLast6Months', 'TotalProsperLoans.x',
+    'ListingCategory_numeric', 'ProsperRating_alpha', 'ProsperRating_numeric', 
+    'ProsperScore')
+
+var_target <- 
+  c('should_pay_toMonth_diff', 'should_pay_toMonth_diff_relative', 
+    'remain_toMonth_diff', 'remain_toMonth_diff_relative',
+    'pay_remain_current', 'pay_until_current')
+
+```
+
+MemberKey variable should be unique identifier of loan applicant. Lets see how many unique users applied for a loan and lets check also TotalProsperLoans variable, which shows number of previous succesfuly repaid prosper loans of the applicant at the time when listing was created.
+
+Number of unique borrowers: `r length(unique(ld$MemberKey))`
+
+Summary of TotalProsperLoans:
+
+```{r}
+
+summary(ld$TotalProsperLoans)
+print('--- % ---')
+round(summary(ld$TotalProsperLoans)/nrow(ld), 4) * 100
+
+```
+
+We see, that most of the loans are currently from first time borrowers, but lets examine LoanStatus and LoanCurrentDaysDelinquent.
+
+```{r LoanStatusDelinquent, fig.width = 4.5, fig.height = 3}
+
+f_plot1(as.data.frame(ld$LoanStatus))
+LoanCurrentDaysDelinquent <- 
+  ld[ld$LoanCurrentDaysDelinquent !=0, 'LoanCurrentDaysDelinquent']
+f_plot1(as.data.frame(LoanCurrentDaysDelinquent))
+rm(LoanCurrentDaysDelinquent)
+
+```
+
+`r round(nrow(subset(ld, LoanCurrentDaysDelinquent == 0))/nrow(ld), 4) * 100` percent of all loans are 0 days delinquent. Distribution of delinquent days of remaining loans is bimodal. The  2nd mode, around 2000 days is interesting, because it suggest, that in years 2008 - 2009 prosper issued more loans, which are until time when this dataset was created, unrepaid. Decrease between 1000 - 2000 days is probably in relation with change of prosper business model in middle of 2009.
+
+We see as well, that around half of all loans in dataset are current outstanding loans, and around 1/3 are completed. Defaulted and charged off loans make `r round(nrow(subset(ld, LoanStatus %in% c('Defaulted', 'Chargedoff')))/nrow(ld), 4) * 100` percent.
+
+Summary of LoanCurrenDaysDelinquent by LoanStatus:
+
+```{r}
+
+by(ld$LoanCurrentDaysDelinquent, ld$LoanStatus, summary, digits = 10)
+
+```
+
+```{r LoanStatus_delinqent_freq}
+
+ggplot(aes(x = LoanCurrentDaysDelinquent, color = LoanStatus), 
+       data = subset(ld, !LoanStatus %in% c('Completed', 
+                                            'Current', 
+                                            'FinalPaymentInProgress', 
+                                            'Cancelled'))) + 
+  geom_freqpoly(binwidth = 5, size = 1) + 
+  coord_trans(x = 'sqrt') + 
+  xlim(c(0,3000)) # inak bude error kvoli coor_trans podla roznej binwidth
+
+```
+
+```{r}
+
+x <- ld[10, 'LoanOriginationDate']
+month(x) <- month(x) + ld[10, 'LoanMonthsSinceOrigination']
+
+```
+
+A loan should have defaulted status based on number of delinquent days, and it should be charged off after default and when there is no reasonable chance, that the borrower  will repay the loan. From above frequency polygons and summary we see, that 6x PastDue loan status is an interval representation of current number of deliquent days, which is not the case for defaulted (minimum 1, growth starting at 60) and charged off loans (minimum and growth at 121). Other interesting thing is the big peak of defaulted loans at 120 deliquent days and very low count of >120 category. This category is currently probably not used and instead, loans reaching 120 delinquent days are moved into defaulted category. For clarification, we see state of outstanding delinquent listings at the time when this dataset was created, around `r x`.
+
+```{r selected_plots, fig.width = 4.5, fig.height = 3}
+
+f_plot1(ld[, colnames(ld) %in% 
+             c('Term', 'ClosedDate', 'LoanOriginationDate', 
+               'MonthlyLoanPayment', "LoanOriginalAmount",  
+               'LP_InterestandFees', 'LP_CustomerPrincipalPayments')])
+
+```
+
+As expected, loan origination and close date are bimodal. Showed plots do not show anything suspicious, except monthly loan payment, which has minumum at 0, which is weird.
+
+```{r monthlyPayment1}
+
+ggplot(aes(x = MonthlyLoanPayment), data = ld) +
+    geom_histogram(binwidth = 1, fill = '#F79420', color = 'black') +
+    xlim(0,100) +
+    ggtitle('Monthly loan payment')
+  
+```
+
+I think, that it would better to manually calculate monthly payment and compare it.
+
+$$ \large{Monthly payment = Principal * \frac{i * \left( 1 + i \right) ^ n} {\left( 1 + i \right) ^ n - 1}} $$
+
+Summary of monthly payment difference:
+
+```{r monthlyPayment2}
+summary(ld$MonthlyLoanPayment_manual - ld$MonthlyLoanPayment)
+```
+
+```{r monthlyPayment3}
+
+ggplot(aes(x = MonthlyLoanPayment_manual - MonthlyLoanPayment), 
+       data = subset(ld, 
+                  abs(MonthlyLoanPayment_manual - MonthlyLoanPayment) > 1)) + 
+  geom_histogram(fill = '#F79420', color = 'black') + 
+  facet_wrap(~ LoanStatus) +
+  ggtitle('Monthly payment calc. difference, absolute difference > 1')
+
+ggplot(aes(x = (MonthlyLoanPayment_manual - MonthlyLoanPayment)/
+             MonthlyLoanPayment), 
+       data = subset(ld, 
+                  abs(MonthlyLoanPayment_manual - MonthlyLoanPayment) > 1)) +
+  geom_histogram(binwidth = 0.01, fill = '#F79420', color = 'black') +
+  ggtitle('Completed loans, absolute difference > 1') +
+  xlim(-0.5,1) +
+  xlab('relative difference')
+
+
+```
+
+Above charts tell us, that `r round(nrow(subset(ld, abs(MonthlyLoanPayment_manual - MonthlyLoanPayment) <= 1))/nrow(ld), 4) * 100` percent of all loans have correctly calculated monthly loan payment (have difference between manually calculated <-1, 1>). Altough, some loans have very big difference and most of them are in completed status. I will retain them in the dataset, but for neccessary calculations, I will use manually calculated monthly payment.
+
+***
+
+#### Target variable
+
+***
+
+Which variable express borrower's ability to repay loan? According to loan status, we have 2 opposite sides. Succesfully completed loans and loans with final payment in progress, and on the other side defaulted and charged off loans. One way how to find differences in input variables, might be to compare these 2 subsets with statistical tests. Target variable, which I would like to find or create, should reflect and emphasize differrence between these 2 subsets. It should be a continuous measure, which is rid of the time factor and provide same information across whole dataset, if possible.
+
+Variables, which may contain needed information, are:
+
+- LoanCurrentDaysDelinquent
+- LoanStatus
+- ProsperPaymentsLessThanOneMonthLate
+- ProsperPaymentsOneMonthPlusLate
+- OnTimeProsperPayments
+- LP_InterestandFees
+
+LoanCurrentDaysDelinquent variable is valid for outstanding loans and shows number of days, which is borrower late with last monthly payment. ProsperPaymentsLessThanOneMonthLate, ProsperPaymentsOneMonthPlusLate and OnTimeProsperPayments are valid only for listings of borrowers, which had at least 1 loan before. LP_InterestandFees is amount paid by borrower covering the interest and fees part of repayable amount.
+
+
+Let's examine completed loans closer.
+
+```{r}
+
+ggplot(aes(x = closed_after_orig), 
+       data = subset(ld, LoanStatus == 'Completed')) + 
+  geom_histogram(binwidth = 1, fill = '#F79420', color = 'black') + 
+  facet_wrap(~ Term) +
+  ggtitle('Difference between loan close and origin date by term - completed loans')
+
+```
+
+From above plot we see, that most of completed loans were repaid earlier than original term, specially loans with 60 months term. I did not expect such big number of loans repaid so early. I think, that it might be possible, that some borrowers repaid loan fast for much lower interest only to get for example better score and lower iterest rate as existing clients, or borrow higher amount.
+
+Number of not closed charged off, completed and defaulted loans: `r nrow(ld[is.na(ld$ClosedDate) & ld$LoanStatus %in%           c('Chargedoff', 'Completed', 'Defaulted'),])`
+
+```{r paid_shouldpay_plots}
+
+ggplot(aes(x = should_pay, y = LP_CustomerPayments, 
+           color = closed_before_repDate), 
+       data = subset(ld, LoanStatus == 'Completed')) + 
+  geom_point(size = 1, alpha = 0.1) + 
+  scale_colour_gradientn(colours=rainbow(3)) +
+  geom_smooth(method = 'lm') +
+  ggtitle('Completed loans')
+
+ggplot(aes(x = should_pay, y = LP_CustomerPayments, color = Term), 
+       data = subset(ld, LoanStatus == 'Completed')) + 
+  geom_point(size = 1, alpha = 0.1) +
+  geom_smooth(method = 'lm') +
+  ggtitle('Completed loans')
+
+smoothScatter(subset(ld, LoanStatus == 'Completed', 
+                     select = should_pay)$should_pay, 
+              subset(ld, LoanStatus == 'Completed', 
+                     select = LP_CustomerPayments)$LP_CustomerPayments, 
+                             colramp = colorRampPalette(c('white', 
+                                                  brewer.pal(9, 'Reds'))), 
+              xlab = 'should_pay', 
+              ylab = 'LP_CustomerPayments', 
+              main = 'Completed loans - density heatmap')
+
+```
+
+```{r fig.width = 4.5, fig.height = 3}
+
+temp <- as.data.frame(ld$LP_CustomerPayments - ld$should_pay)
+colnames(temp) <- 'difference_from_origAmount'
+
+f_plot1(df = temp)
+rm(temp)
+
+```
+
+From above plots we see, that borrowers, which repaid their loans earlier did not have to pay full repayable amount. Overpaid loans are rare, and the overpaid amount should contain only late fees. But for loans repaid earlier and are underpaid, how much money is enough to complete the loan? If the borrower had some late payments, cah I get information about late fees?
+
+Variable should_pay_toClose shows repayable amount, but where loan term is based on month difference between loan close and origination date. This calculation may not be correct due to amortized way of processing borrowers payments (each payment with different amount to pay down principal and interest, see https://www.lendingmemo.com/amortization-calculator/), but because dataset does not contain any detailed payment information associoated to listing (dates and amounts), it could provide at least some hints.
+
+```{r}
+
+ggplot(data = subset(ld, LoanStatus == 'Completed')) + 
+    geom_histogram(aes(x = should_pay_toClose), fill = 'red', alpha = 0.2, 
+                   binwidth = 500) + 
+    geom_histogram(aes(x = LP_CustomerPayments), fill = 'blue', alpha = 0.2, 
+                   binwidth = 500) + 
+    xlab('How much borrower paid (blue) vs. should pay to close date (red)') + 
+    ggtitle('Completed loans')
+
+```
+
+Variable should_pay_toMonth shows what amount the borrower should have paid at current month, or original repayable amount, when its after repayment date.
+
+```{r fig.heigth = 7}
+
+ggplot(aes(x = should_pay_toMonth, y = LP_CustomerPayments), 
+       data = subset(ld, !is.na(should_pay_toMonth) & 
+                       sign_repDate == 'before_repDate')) + 
+    geom_jitter(size = 1, alpha = 0.1) + 
+    geom_smooth(method = 'lm') +
+    facet_wrap(~ LoanStatus) +
+    ggtitle('Loans before repayment date')
+
+
+
+```
+
+Summary of should_pay_toMonth_diff by loan status on loans before repayment date:
+
+```{r}
+
+by(ld[ld$sign_repDate == 'before_repDate', 'should_pay_toMonth_diff'], 
+   ld[ld$sign_repDate == 'before_repDate', 'LoanStatus'], 
+   summary)
+temp1 <- subset(ld, sign_repDate == 'before_repDate', 
+                select = should_pay_toMonth_diff)
+colnames(temp1) <- 'should_pay_toMonth_diff'
+
+```
+
+```{r fig.width = 4.5, fig.height = 3}
+f_plot1(temp1)
+rm(temp1)
+
+```
+
+```{r}
+
+ggplot(aes(x = LoanStatus, y= should_pay_toMonth_diff), 
+       data = subset(ld, sign_repDate == 'before_repDate')) +
+  geom_boxplot() +
+  stat_summary(fun.y = mean, geom = 'point', shape = 1) +
+  coord_flip(ylim = c(-10000, 10000)) +
+  ggtitle('LoanStatus vs. should_pay_toMonth_diff') + 
+  geom_hline(yintercept = 0, color = 'red', linetype = 2, size = 1)
+
+
+```
+
+From plots and summary of difference between how much borrower paid and should pay on loans before repayment date in given month after loan origination date, we see how borrower pays accorging to scheduled monthly payments. In completed loans we see already described pattern, that they tend to be repaid earlier for less amount than original and the borrower pays more than scheduled at given month, on the contrary to delinquent loans. I will use variable should_pay_toMonth_diff as target variable.
+
+Other variables, which I will use as targets:
+
+- should_pay_toMonth_diff_relative,
+- remain_toMonth_diff,
+- remain_toMonth_diff_relative, 
+- pay_remain_current,
+- pay_until_current
+- latePayments_ratio
+
+latePayments_ratio is a ratio of total late payments of borrower's prosper history to total payments billed. It's valid for borrowers, which had at least 1 loan before.
+
+Now, when I have target variables, for which I was looking for, I can begin analysing their relationships to input variables. Following tables contain all variables, which I created, to better describe loans or borrowers, help and target variables.
+
+***
+
+#### New variables created for each listing:
+
+***
+
+| Variable                          | Description   |
+| --------------------------------- |:------------- | 
+| YearlyIncome                      | stated monthly income * 12 
+| closed_after_orig                 | how much months was loan closed after origination date
+| closed_before_repDate             | how much months was loan closed before original repayment date
+| closed_before_repDate_relative    | relative from loan original term
+| months_until_repDate              | how much months has loan currently until original repayment date
+| months_until_repDate_relative     | relative from loan original term
+| sign_repDate                      | if the loan is after, or before repayment date
+| is_closed                         | if the loan is closed or not
+| MonthlyLoanPayment_manual         | manually calculated monthly payment
+| should_pay                        | original repayable amount of the loan at original repayment date
+| should_pay_interest               | original interest part of repayable amount of the loan at original repayment date
+| should_pay_interest_relative      | relative from original repayable amount
+| should_pay_toClose                | repayable amount to pay in month when the loan was closed, completed loans
+| should_pay_toClose_interest       | interest part of repayable amount to pay in month when the loan was closed, completed loans
+| should_pay_interest_all           | how much should borrower pay interest, different calculation for completed and other loans
+| AmountDelinquent_principal_ratio  | currently delinquent amount as portion from principal
+| AmountDelinquent_income_ratio     | currently delinquent amount as portion from stated monthly income
+| should_pay_toMonth                | how much should borrower pay to current month, or to repayment date, when its after
+| should_pay_toMonth_diff           | difference between how much borrower should pay at given month and really paid
+| should_pay_toMonth_diff_relative  | relative to should_pay_toMonth
+| should_remain_toMonth             | amount which should remain to pay at given month
+| remain_toMonth                    | amount which remains to repay at given month
+| remain_toMonth_diff               | difference between how much borrower should have remaining amount to repay and really has
+| remain_toMonth_diff_relative      | relative to should_remain_toMonth
+| pay_remain_current                | amount left to repay / scheduled amount to repay at given month
+| pay_until_current                 | amount paid / scheduled amount which should be paid at given month
+
+***
+
+#### New variables created when grouping by borrower:
+
+***
+
+| Variables                           | -             |
+| ----------------------------------- |:------------- | 
+| LessOneMonthLatePayments_ratio      | TotalCustomerPayments  
+| PlusOneMonthLatePaymetns_ratio      | TotalInterestandFees
+| OnTimePayments_ratio                | LastLoanStatus
+| latePayments_ratio                  | TotalInvestors
+| TotalProsperLoans                   | last category of categorical variables and all categories coancenated
+| TotalProsperPaymentsBilled          | average, maximum interval in months between loan origination dates
+| OntimeProsperPayments               | average, maximum interval in months between loan close date and next loan origination date
+| ProsperPaymentsLessThanOneMonthLate | average, minimum, maximum of selected continuous variables
+| ProsperPaymentsOneMonthPlusLate     | average, minimum, maximum growth of selected continous variables
+| ProsperPrincipalBorrowed            | -
+
+***
+
+#### Target vs. input variables
+
+***
+
+I think, that for search for patterns in input variables might be reasonable to use only loans in completed, defaulted and charged off status because differences between these 2 opposite groups should be more 'visible', and loans before repayment date because of setup calculations. First, lets briefly examine distribution of target variables.
+
+
+```{r fig.width = 4.5, fig.height = 3}
+
+# lb_before_repDate - listings df joined with borrower df, completed, defaulted and charged off loans, before repayment date
+
+f_plot1(df = lb_before_repDate[, colnames(lb_before_repDate) %in% var_target])
+
+```
+
+Variables should_pay_toMonth_diff and remain_toMonth_diff have very close to normal distribution. Variable should_pay_toMonth_diff relative and remain_toMonth_diff_relative are both left skewed. Variable pay_until_current is right skewed with most of the values between 0 and 2. Important number in pay_until_current and pay_remain_current is 1, which is the turning point between paying more/less than scheduled. For both variables may be some sort of transformation needed. Variable latePayments_ratio has only `r nrow(subset(lb_before_repDate, latePayments_ratio > 0))` values bigger than 0, which is in my opinion very few to show any meaningful patterns in input variables, so I excluded it from analysis.
+
+***
+
+### Found relationships and final plots
+
+***
+
+Since this dataset contains many input variables, I will include only these, where I found signs of possible relationship to target variables and few selected ones, which contain interesting information. The way how I did examine relationships between targets and inputs include:
+
+- brief check of relationship on 0.01 - 0.99 quantile of both variables
+- analyzing the relationship in steps towards 0.25 - 0.75 quantile of target variable, 0.01 - 0.99 quantile of input variable
+- analyzing the relationship on 0.1 - 0.9 or 0.2 - 0.8 quantile of both variables
+- brief check of most 'dense' part according to density heatmap, manually creating subsets
+- binning of continuous input variables according to quantiles (equally sized groups) or values
+
+Variables, which show signs of relationships with targets include:
+
+| Variables                 | -             |
+| ------------------------- |:------------- | 
+| IncomeRange               | IncomeVerifiable
+| PublicRecordsLast10Years  | InquiriesLast6Months
+| TotalProsperLoans.x       | ProsperRating_numeric
+| ProsperRating_alpha       | ProsperScore
+| ListingCategory_numeric   | EmploymentStatus
+
+Following plots show combination of input and target variables, where is the relationship most visible, but similar relationship as showed we can observe with all target variables. Red line indicates the turning point, box color indicates if category median is in part where borrower pays better (green) / worse (red) than scheduled, black number near each box indicates percentage of loans in given category from all loans, red number indicates percentage of loans which are repaid worse than scheduled in given category from all loans which are repaid worse than scheduled. Underlying violin plots visualize estimation of probability density function of target variable. Final dataset, which was analyzed contains `r nrow(lb_before_repDate)` loans.
+
+```{r finalPlots}
+
+ggplot(aes(x = TotalProsperLoans.x, y = should_pay_toMonth_diff), 
+       data = lb_before_repDate %>% 
+         group_by(TotalProsperLoans.x) %>% 
+         mutate(med_type = ifelse(median(should_pay_toMonth_diff) <= 0, 
+                                  T, F)) %>% 
+         ungroup()) + 
+  geom_violin(alpha = 0.2) +
+  geom_boxplot(aes(fill = med_type), alpha = 0.5) +
+  theme(legend.position = 'none', panel.background = element_rect(fill =NA),
+        panel.grid.major = element_line(colour = '#F6F6F6'),
+        axis.line = element_line(colour = '#BDBDBD')) +
+  coord_cartesian(ylim = c(-10000, 10000)) + 
+  stat_summary(fun.y = mean, geom = 'point', shape = 1) + 
+  geom_hline(yintercept = 0, color = 'red', linetype = 2, size = 1) +
+  ggtitle('(1) TotalProsperLoans vs. should_pay_toMonth_diff') + 
+  stat_summary(fun.data = f_cat_perc, geom = 'text', hjust = -0.5,
+               vjust = -1) +
+  stat_summary(fun.data = f_cat_late_diff, geom = 'text', hjust = -0.5,
+               vjust= 1, color = 'red') +
+  scale_fill_manual(values = setNames(c('#CCFF99', '#FFA07A'), c(T, F)))
+
+TotalProsperLoans <- 
+  as.integer(as.character(ifelse(is.na(lb_before_repDate$TotalProsperLoans.x), 0, 
+                                 lb_before_repDate$TotalProsperLoans.x)))
+should_pay_toMonth_diff <- rank(lb_before_repDate$should_pay_toMonth_diff)
+cor.test(TotalProsperLoans, should_pay_toMonth_diff, method = 'spearman', exact = F)
+rm(TotalProsperLoans)
+
+ggplot(aes(x = IncomeRange, y = pay_remain_current), 
+       data = lb_before_repDate %>% 
+         group_by(IncomeRange) %>% 
+         mutate(med_type = ifelse(median(pay_remain_current) >= 1, T, F)) %>% 
+         ungroup()) + 
+  geom_violin(alpha = 0.2) +
+  geom_boxplot(aes(fill = med_type), alpha = 0.5) +
+  theme(legend.position = 'none', panel.background = element_rect(fill =NA),
+        panel.grid.major = element_line(colour = '#F6F6F6'),
+        axis.line = element_line(colour = '#BDBDBD')) +
+  coord_cartesian(ylim = c(-2, 10)) + 
+  stat_summary(fun.y = mean, geom = 'point', shape = 1) + 
+  geom_hline(yintercept = 1, color = 'red', linetype = 2, size = 1) +
+  ggtitle('(2) IncomeRange vs. pay_remain_current') + 
+  stat_summary(fun.data = f_cat_perc, geom = 'text', hjust = -0.5,
+               vjust = -1) +
+  stat_summary(fun.data = f_cat_late_rcurrent, geom = 'text', hjust = -0.5,
+               vjust = 1.7, color = 'red') +
+  scale_fill_manual(values = setNames(c('#CCFF99', '#FFA07A'), c(T, F)))
+
+
+IncomeRange <- plyr::mapvalues(lb_before_repDate$IncomeRange, from = c(
+                                                         '$1-24,999',
+                                                         '$25,000-49,999',
+                                                         '$50,000-74,999',
+                                                         '$75,000-99,999', 
+                                                         '$100,000+'),
+                          to = c(1, 2, 3, 4, 5))
+IncomeRange <- ifelse(is.na(IncomeRange), 0, IncomeRange)
+pay_remain_current <- rank(lb_before_repDate$pay_remain_current)
+cor.test(IncomeRange, pay_remain_current, method = 'spearman', exact = F)
+rm(IncomeRange)
+
+ggplot(aes(x = IncomeVerifiable, y = should_pay_toMonth_diff_relative), 
+       data = lb_before_repDate %>% 
+         group_by(IncomeVerifiable) %>% 
+         mutate(med_type = ifelse(median(should_pay_toMonth_diff_relative) <= 0, 
+                                  T, F)) %>% 
+         ungroup()) + 
+  geom_violin(alpha = 0.2, width = 0.7) +
+  geom_boxplot(aes(fill = med_type), alpha = 0.5) + 
+  theme(legend.position = 'none', panel.background = element_rect(fill =NA),
+        panel.grid.major = element_line(colour = '#F6F6F6'),
+        axis.line = element_line(colour = '#BDBDBD')) +
+  coord_cartesian(ylim = c(-2.5, 1)) + 
+  stat_summary(fun.y = mean, geom = 'point', shape = 1) + 
+  geom_hline(yintercept = 0, color = 'red', linetype = 2, size = 1) +
+  ggtitle('(3) IncomeVerifiable vs. should_pay_toMonth_diff_relative') + 
+  stat_summary(fun.data = f_cat_perc, geom = 'text', hjust = -0.5,
+               vjust = -1) +
+  stat_summary(fun.data = f_cat_late_diff_rel, geom = 'text', hjust = -0.5,
+               vjust = 1, color = 'red') +
+  scale_fill_manual(values = setNames(c('#CCFF99', '#FFA07A'), c(T, F)))
+
+ggplot(aes(x = PublicRecordsLast10Years, y = remain_toMonth_diff), 
+       data = lb_before_repDate %>% 
+         group_by(PublicRecordsLast10Years) %>% 
+         mutate(med_type = ifelse(median(remain_toMonth_diff) >= 0, 
+                                  T, F)) %>% 
+         ungroup()) + 
+  geom_violin(alpha = 0.2) +
+  geom_boxplot(aes(fill = med_type), alpha = 0.5) +
+  theme(legend.position = 'none', panel.background = element_rect(fill =NA),
+        panel.grid.major = element_line(colour = '#F6F6F6'),
+        axis.line = element_line(colour = '#BDBDBD')) +
+  coord_cartesian(ylim = c(-10000, 10000)) + 
+  stat_summary(fun.y = mean, geom = 'point', shape = 1) + 
+  geom_hline(yintercept = 0, color = 'red', linetype = 2, size = 1) +
+  ggtitle('(4) PublicRecordsLast10Years vs. remain_toMonth_diff') + 
+  stat_summary(fun.data = f_cat_perc, geom = 'text', hjust = -0.4,
+               vjust = -1) +
+  stat_summary(fun.data = f_cat_late_rem_diff, geom = 'text', hjust = -0.4,
+               vjust = 1.7, color = 'red') +
+  scale_fill_manual(values = setNames(c('#CCFF99', '#FFA07A'), c(T, F)))
+
+
+PublicRecordsLast10Years <- as.integer(as.character(lb_before_repDate$PublicRecordsLast10Years))
+remain_toMonth_diff <- rank(lb_before_repDate$remain_toMonth_diff)
+cor.test(PublicRecordsLast10Years, remain_toMonth_diff, method = 'spearman', exact = F)
+rm(PublicRecordsLast10Years)
+rm(remain_toMonth_diff)
+
+ggplot(aes(x = InquiriesLast6Months, y = pay_remain_current), 
+       data = lb_before_repDate %>% 
+           group_by(InquiriesLast6Months) %>% 
+           mutate(med_type = ifelse(median(pay_remain_current) >= 1, 
+                                    T, F)) %>% 
+           ungroup()) + 
+    scale_x_discrete(limits = c(1:14)) + 
+    geom_violin(alpha = 0.2) +
+    geom_boxplot(aes(fill = med_type), alpha = 0.5) +
+    theme(legend.position = 'none', panel.background = element_rect(fill =NA),
+        panel.grid.major = element_line(colour = '#F6F6F6'),
+        axis.line = element_line(colour = '#BDBDBD')) +
+    coord_cartesian(ylim = c(-2.5, 10)) + 
+    stat_summary(fun.y = mean, geom = 'point', shape = 1) + 
+    geom_hline(yintercept = 1, color = 'red', linetype = 2, size = 1) +
+    ggtitle('(5) InquiriesLast6Months vs. pay_remain_current') + 
+    stat_summary(fun.data = f_cat_perc, geom = 'text', hjust = -0.1,
+                 vjust = -1.1, size = 3) +
+    stat_summary(fun.data = f_cat_late_rcurrent, geom = 'text', size = 3, color = 'red',
+                 hjust = -0.1, vjust = 1.5) +
+  scale_fill_manual(values = setNames(c('#CCFF99', '#FFA07A'), c(T, F)))
+
+InquiriesLast6Months <- as.integer(as.character(lb_before_repDate$InquiriesLast6Months))
+cor.test(InquiriesLast6Months, pay_remain_current, method = 'spearman', exact = F)
+rm(InquiriesLast6Months)
+
+ggplot(aes(x = ProsperRating_numeric, y = pay_remain_current), 
+       data = lb_before_repDate %>% 
+         group_by(ProsperRating_numeric) %>% 
+         mutate(med_type = ifelse(median(pay_remain_current) >= 1, 
+                                  T, F)) %>% 
+         ungroup()) + 
+  geom_violin(alpha = 0.2) +
+  geom_boxplot(aes(fill = med_type), alpha = 0.5) +
+  theme(legend.position = 'none', panel.background = element_rect(fill =NA),
+        panel.grid.major = element_line(colour = '#F6F6F6'),
+        axis.line = element_line(colour = '#BDBDBD')) +
+  coord_cartesian(ylim = c(-2.5, 10)) + 
+  stat_summary(fun.y = mean, geom = 'point', shape = 1) + 
+  geom_hline(yintercept = 1, color = 'red', linetype = 2, size = 1) +
+  ggtitle('(6) ProsperRating_numeric vs. pay_remain_current') + 
+  stat_summary(fun.data = f_cat_perc, geom = 'text', hjust = -0.5,
+               vjust = -1) +
+  stat_summary(fun.data = f_cat_late_rcurrent, geom = 'text', hjust = -0.5,
+               vjust = 1.3, color = 'red') +
+  scale_fill_manual(values = setNames(c('#CCFF99', '#FFA07A'), c(T, F)))
+
+ProsperRating_numeric <- as.integer(as.character(lb_before_repDate$ProsperRating_numeric))
+cor.test(ProsperRating_numeric, pay_remain_current, method = 'spearman', exact = F)
+rm(ProsperRating_numeric)
+
+ggplot(aes(x = ProsperRating_alpha, y = pay_remain_current), 
+       data = lb_before_repDate %>% 
+         group_by(ProsperRating_alpha) %>% 
+         mutate(med_type = ifelse(median(pay_remain_current) >= 1, 
+                                  T, F)) %>% 
+         ungroup()) + 
+  geom_violin(alpha = 0.2) +
+  geom_boxplot(aes(fill = med_type), alpha = 0.5) + 
+  theme(legend.position = 'none', panel.background = element_rect(fill =NA),
+        panel.grid.major = element_line(colour = '#F6F6F6'),
+        axis.line = element_line(colour = '#BDBDBD')) +
+  coord_cartesian(ylim = c(-2.5, 10)) + 
+  stat_summary(fun.y = mean, geom = 'point', shape = 1) + 
+  geom_hline(yintercept = 1, color = 'red', linetype = 2, size = 1) +
+  ggtitle('(7) ProsperRating_alpha vs. pay_remain_current') + 
+  stat_summary(fun.data = f_cat_perc, geom = 'text', hjust = -0.5,
+               vjust = -1) +
+  stat_summary(fun.data = f_cat_late_rcurrent, geom = 'text', hjust = -0.5,
+               vjust = 1.2, color = 'red') +
+  scale_fill_manual(values = setNames(c('#CCFF99', '#FFA07A'), c(T, F)))
+
+ggplot(aes(x = ProsperScore, y = pay_remain_current), 
+       data = lb_before_repDate %>% 
+         group_by(ProsperScore) %>% 
+         mutate(med_type = ifelse(median(pay_remain_current) >= 1, 
+                                  T, F)) %>% 
+         ungroup()) + 
+  geom_violin(alpha = 0.2) +
+  geom_boxplot(aes(fill = med_type), alpha = 0.5) +
+  theme(legend.position = 'none', panel.background = element_rect(fill =NA),
+        panel.grid.major = element_line(colour = '#F6F6F6'),
+        axis.line = element_line(colour = '#BDBDBD')) +
+  coord_cartesian(ylim = c(-2.5, 10)) + 
+  stat_summary(fun.y = mean, geom = 'point', shape = 1) + 
+  geom_hline(yintercept = 1, color = 'red', linetype = 2, size = 1) +
+  ggtitle('(8) ProsperScore vs. pay_remain_current') + 
+  stat_summary(fun.data = f_cat_perc, geom = 'text', hjust = -0.3,
+               vjust = -1) +
+  stat_summary(fun.data = f_cat_late_rcurrent, geom = 'text', hjust = -0.4,
+               vjust = 1.3, color = 'red') +
+  scale_fill_manual(values = setNames(c('#CCFF99', '#FFA07A'), c(T, F)))
+
+ProsperScore <- as.integer(as.character(lb_before_repDate$ProsperScore))
+cor.test(ProsperScore, pay_remain_current, method = 'spearman', exact = F)
+rm(ProsperScore)
+rm(pay_remain_current)
+rm(should_pay_toMonth_diff)
+
+ggplot(aes(x = reorder(ListingCategory_numeric, 
+                       should_pay_toMonth_diff, 
+                       FUN=median), 
+           y = should_pay_toMonth_diff), 
+       data = lb_before_repDate %>% 
+           group_by(ListingCategory_numeric) %>% 
+           mutate(med_type = ifelse(median(should_pay_toMonth_diff) <= 0, 
+                                    T, F)) %>% 
+           ungroup()) +
+    geom_boxplot(aes(fill = med_type), width = 0.5, alpha = 0.5) +
+    theme(legend.position = 'none', panel.background = element_rect(fill =NA),
+        panel.grid.major = element_line(colour = '#F6F6F6'),
+        axis.line = element_line(colour = '#BDBDBD')) +
+    coord_flip(ylim = c(-20000, 20000)) +
+    stat_summary(fun.y = mean, geom = 'point', shape = 1) + 
+    geom_hline(yintercept = 0, color = 'red', linetype = 2, size = 1) +  
+    xlab('Listing category') +
+    ggtitle('(9) Listing category vs. should_pay_toMonth_diff') + 
+    stat_summary(fun.data = f_cat_perc, geom = 'text', hjust = -0.2, 
+                 vjust = -0.7, size = 2.5) +
+    stat_summary(fun.data = f_cat_late_diff, geom = 'text', hjust = 1,
+                 vjust = -0.7, color = 'red', size = 2.5) +
+    scale_fill_manual(values = setNames(c('#CCFF99', '#FFA07A'), c(T, F)))
+
+ggplot(aes(x = reorder(EmploymentStatus, 
+                       should_pay_toMonth_diff, 
+                       FUN=median), 
+           y = should_pay_toMonth_diff), 
+       data = lb_before_repDate %>% 
+           group_by(EmploymentStatus) %>% 
+           mutate(med_type = ifelse(median(should_pay_toMonth_diff) <= 0, 
+                                    T, F)) %>% 
+           ungroup()) + 
+  geom_violin(alpha = 0.2) +
+  geom_boxplot(aes(fill = med_type), alpha = 0.5) + 
+  theme(legend.position = 'none', panel.background = element_rect(fill =NA),
+        panel.grid.major = element_line(colour = '#F6F6F6'),
+        axis.line = element_line(colour = '#BDBDBD')) +
+  coord_cartesian(ylim = c(-10000, 10000)) + 
+  stat_summary(fun.y = mean, geom = 'point', shape = 1) + 
+  geom_hline(yintercept = 0, color = 'red', linetype = 2, size = 1) + 
+  xlab('Employment status') +
+  ggtitle('(10) EmploymentStatus vs. should_pay_toMonth_diff') +
+  stat_summary(fun.data = f_cat_perc, geom = "text", hjust = -0.5, 
+               vjust = -1) +
+  stat_summary(fun.data = f_cat_late_diff, geom = 'text', hjust = -0.5,
+               vjust = 1.2, color = 'red') +
+  scale_fill_manual(values = setNames(c('#CCFF99', '#FFA07A'), c(T, F)))
+
+```
+
+***
+
+### Plots summary
+
+***
+
+Some of showed plots confrmed my assumptions about certain categories and related values of target variables. For example total number of borrower prosper loans, where we see trend, that with higher number of previously taken loans, the borrowers ability to repay them increases. NA values are assiociated with listings of 1st time borrowers, which is also the largest group. Most of loans, which are repaid worse than scheduled are from this category.
+
+Except summary statistics of target variable visualized as boxplot (mean, median, 1st and 3rd quartile), important thing to look at, which explains them in more detail, is approximate shape of distribution in form of underlying violin plot. From plots where we can identify bimodal distributions, we see how density around each mode changes according to input variable category in favour of 1st or 2nd mode. This can be explained due to change of relative number of occurencies wihtin each category between 2 subsets of our interests (completed vs. defaulted and charged off loans).
+
+My expectations where confirmed for IncomeRage, IncomeVerifiable variable and for borrowers employment status as well, that employed people will pay the best, but the meaning of categories is a bit unclear (difference between 'Employed' and 'Full-time' category, clarification of 'Other' and 'Not employed' category - what other source of income the borrower has?). NA values in IncomeRange are 'not displayed' and 'not employed' categories, which I changed at the beginning. 'Employed' is category with biggest share on loans, which are repaid worse than scheduled.
+
+What I did not expected is relationship to number of inquiries in last 6 months and borrowers public records for 10 years. My expectations were wrong for listing category, where I expected, that borrowers with debt consolidation loan reason pay the worst. These loans make more than half of all loans and `r round(nrow(subset(lb_before_repDate, ListingCategory_numeric == 'Debt consolidation' & should_pay_toMonth_diff > 0))/nrow(subset(lb_before_repDate, should_pay_toMonth_diff > 0)), 3) * 100` percent of loans which are repaid worse than scheduled.
+
+Prosper scoring and rating variables are in relation with target variables as well. Here, except 2 modes we can see, that for better rated loans is the variance bigger than for lower rated ones, which are more concentrated around the turning point. 
+
+***
+
+## Reflection
+
+***
+
+Altough performed analysis revealed noticable relationships with variables, which describe borrowers ability to repay a loan, my goal on the beginning of the analysis was to find continuous variable with much more evident relationship as found categorical ones and create regression model. 
+
+Process from beginning with dataset consistency validation to identify variables with relationships to targets was a bit uncertain, because I did not know what should be the calculation of variable, which gives me answer to question asked.  Ideas of target variables calculations came during dataset validation when having more information about its content. 
+
+Neccessary to perform analysis of such a number of variables, which were originally included plus created ones, required to create functions saving time and which quickly reveal as much possible in terms of variables main characteristics and their relations. 
+
+Regarding variables, which were originally at disposal, I think, that detailed information about borrowers payments, their dates and amounts should be available as well. Interesting may be some variables describing process of listing evaluation too, and more detailed borrowers characteristics (married, number of children, number of people living in the household, age, education earned, etc.).
+
+Ways, how this analysis could be extended may be focused on:
+
+- exploring loans wich have after repayment date
+- performing statistical tests to know if differences between found variables categories are significant
+- split analysis to old business model/new business model (july 2009), or when some another important event occured
+
+***
+
+#### References
+
+***
+
+<http://www.cookbook-r.com/Manipulating_data/Recoding_data/>
+
+<http://www.rapidtables.com/web/color/RGB_Color.htm>
+
+<http://stackoverflow.com/questions/11838278/plot-with-conditional-colors-based-on-values-in-r>
+
+<http://www.introductoryr.co.uk/Reproducibility/Chap_6_Maths.html>
+
+<http://stackoverflow.com/questions/22238278/fine-tuning-ggplot2s-geom-boxplot>
+
+<http://stackoverflow.com/questions/15660829/how-to-add-a-number-of-observations-per-group-and-use-group-mean-in-ggplot2-boxp>
+
+<http://kbroman.org/knitr_knutshell/pages/Rmarkdown.html>
+
+<https://google.github.io/styleguide/Rguide.xml>
+
+<http://www.rcreditscoring.com/binning-continuous-variables-in-r-the-basics/>
+
+<http://stackoverflow.com/questions/21208801/group-by-multiple-columns-in-dplyr-using-string-vector-input>
+
+<https://groups.google.com/forum/#!topic/manipulatr/Augi_tPUTY8>
+
+<http://stackoverflow.com/questions/23528862/summarize-with-conditions-in-dplyr>
+
+<http://stackoverflow.com/questions/29904974/conditionally-count-in-dplyr>
+
+<http://osdir.com/ml/ggplot2/2013-07/msg00068.html>
+
+<http://stackoverflow.com/questions/28752805/use-dplyr-to-concatenate-a-column>
+
+<http://princeofslides.blogspot.sk/2011/02/fixing-up-smoothscatter-heat-maps.html>
+
+<http://venus.ifca.unican.es/Rintro/graphs.html>
+
+<https://chemicalstatistician.wordpress.com/2013/06/09/exploratory-data-analysis-kernel-density-estimation-in-r-on-ozone-pollution-data-in-new-york-and-ozonopolis/>

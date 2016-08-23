@@ -1,0 +1,17 @@
+http://www.rapidtables.com/web/color/RGB_Color.htm
+http://stackoverflow.com/questions/11838278/plot-with-conditional-colors-based-on-values-in-r
+http://www.introductoryr.co.uk/Reproducibility/Chap_6_Maths.html
+http://stackoverflow.com/questions/22238278/fine-tuning-ggplot2s-geom-boxplot
+http://stackoverflow.com/questions/15660829/how-to-add-a-number-of-observations-per-group-and-use-group-mean-in-ggplot2-boxp
+http://kbroman.org/knitr_knutshell/pages/Rmarkdown.html
+https://google.github.io/styleguide/Rguide.xml
+http://www.rcreditscoring.com/binning-continuous-variables-in-r-the-basics/
+http://stackoverflow.com/questions/21208801/group-by-multiple-columns-in-dplyr-using-string-vector-input
+https://groups.google.com/forum/#!topic/manipulatr/Augi_tPUTY8
+http://stackoverflow.com/questions/23528862/summarize-with-conditions-in-dplyr
+http://stackoverflow.com/questions/29904974/conditionally-count-in-dplyr
+http://osdir.com/ml/ggplot2/2013-07/msg00068.html
+http://stackoverflow.com/questions/28752805/use-dplyr-to-concatenate-a-column
+http://princeofslides.blogspot.sk/2011/02/fixing-up-smoothscatter-heat-maps.html
+http://venus.ifca.unican.es/Rintro/graphs.html
+https://chemicalstatistician.wordpress.com/2013/06/09/exploratory-data-analysis-kernel-density-estimation-in-r-on-ozone-pollution-data-in-new-york-and-ozonopolis/
